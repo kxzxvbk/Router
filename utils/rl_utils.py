@@ -7,7 +7,8 @@ from typing import List, Dict
 
 def default_decollate(batch: Dict) -> List[Dict]:
     keys = batch.keys()
-    return [{k: batch[k][i] for k in keys} for i in range(len(batch))]
+    length = len(batch[list(keys)[0]])
+    return [{k: batch[k][i] for k in keys} for i in range(length)]
 
 
 def default_collate(batch: List[Dict]) -> Dict:
@@ -32,12 +33,12 @@ def compute_returns(reward: List[float], done: List[bool], gamma: float = 0.99) 
 
 
 class PGTrainer:
-    def __init__(self, model, tokenizer, train_dataloader, test_dataloader, batch_size):
+    def __init__(self, model, tokenizer, train_dataset, test_dataset, batch_size):
         self.model = model
         self.tokenizer = tokenizer
-        self.train_dataloader = train_dataloader
-        self.test_dataloader = test_dataloader
-        self.batch_size = self.batch_size
+        self.train_dataset = train_dataset
+        self.test_dataset = test_dataset
+        self.batch_size = batch_size
 
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=1e-5, weight_decay=1e-2
@@ -58,22 +59,24 @@ class PGTrainer:
         """
         assert num_traj % self.batch_size == 0, "num_traj must be divisible by batch_size"
         num_episode = num_traj // self.batch_size
-        trajectories = [[] for i in range(self.num_traj)]
+        trajectories = [[] for i in range(num_traj)]
 
         for _ in range(num_episode):
             transitions = []
             for i, env in enumerate(self.envs):
-                prompt_idx = (self.train_idx + i) % len(self.train_dataloader)
-                transition = env.reset(self.train_dataloader[prompt_idx])
+                prompt_idx = (self.train_idx + i) % len(self.train_dataset)
+                transition = env.reset(self.train_dataset[prompt_idx])
                 transitions.append(transition)
             transitions = default_collate(transitions)
             
             while True:
-                obs = transitions['obs']
-                obs = self.tokenizer(obs, padding=True, return_tensors='pt')
-                logits = self.model(**obs)
+                orig_obs = transitions['obs']
+                obs = self.tokenizer(orig_obs, padding=True, return_tensors='pt')
+                logits = self.model(**obs).logits
+                probs = logits.softmax(dim=1)
+
                 # Use mutinomial sampling to sample an action.
-                action = torch.multinomial(logits, num_samples=1).squeeze(1).tolist()
+                action = torch.multinomial(probs, num_samples=1).squeeze(1).tolist()
 
                 transitions = []
                 for i, env in enumerate(self.envs):
@@ -82,7 +85,7 @@ class PGTrainer:
                 transitions = default_collate(transitions)
                 
                 batch_data = {
-                    'obs': obs,
+                    'obs': orig_obs,
                     'action': action,
                     'reward': transitions['reward'],
                     'done': transitions['done'],
@@ -94,12 +97,16 @@ class PGTrainer:
                 if all(transitions['done']):
                     break
 
-            self.train_idx = (self.train_idx + self.batch_size) % len(self.train_dataloader)
+            self.train_idx = (self.train_idx + self.batch_size) % len(self.train_dataset)
         
         trajectories = [default_collate(traj) for traj in trajectories]
         for i in range(num_traj):
             trajectories[i]['return'] = compute_returns(trajectories[i]['reward'], trajectories[i]['done'])
-        return default_decollate(trajectories)
+
+        ret = []
+        for i in range(num_traj):
+            ret.extend(default_decollate(trajectories[i]))
+        return ret
 
     def _update(self, trajectories: List[Dict]) -> None:
         """
@@ -116,7 +123,7 @@ class PGTrainer:
 
             obs = self.tokenizer(batch['obs'], padding=True, return_tensors='pt')
             action = torch.tensor(batch['action'])
-            logits = self.model(**obs)
+            logits = self.model(**obs).logits
             log_probs = log_softmax(logits, dim=1)
             log_probs = log_probs.gather(1, action.unsqueeze(1)).squeeze(1)
             returns = torch.tensor(batch['return'])
@@ -126,6 +133,8 @@ class PGTrainer:
             loss.backward()
             self.optimizer.step()
             self._iter_num += 1
+            if self._iter_num % 10 == 0:
+                print(f"iter {self._iter_num}, loss {loss.item()}.")
     
     def train(self, num_iters: int) -> None:
         """
