@@ -136,6 +136,9 @@ class PGTrainer:
             if self._iter_num % 10 == 0:
                 print(f"iter {self._iter_num}, loss {loss.item()}.")
     
+    def evaluate(self, num_traj: int = 8) -> None:
+        raise NotImplementedError
+    
     def train(self, num_iters: int) -> None:
         """
         Train the model for `num_iters` iterations.
