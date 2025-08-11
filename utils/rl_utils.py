@@ -1,8 +1,10 @@
-from .env_utils import Env
-from torch.nn.functional import log_softmax
-import torch
 import random
 from typing import List, Dict
+
+import torch
+from torch.nn.functional import log_softmax
+
+from .env_utils import Env
 
 
 def default_decollate(batch: Dict) -> List[Dict]:
