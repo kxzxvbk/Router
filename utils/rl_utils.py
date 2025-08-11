@@ -2,19 +2,23 @@ from .env_utils import Env
 from torch.nn.functional import log_softmax
 import torch
 import random
+from typing import List, Dict
 
 
-def default_decollate(batch):
+def default_decollate(batch: Dict) -> List[Dict]:
     keys = batch.keys()
     return [{k: batch[k][i] for k in keys} for i in range(len(batch))]
 
 
-def default_collate(batch):
+def default_collate(batch: List[Dict]) -> Dict:
     keys = batch[0].keys()
     return {k: [d[k] for d in batch] for k in keys}
 
 
-def compute_returns(reward, done, gamma=0.99):
+def compute_returns(reward: List[float], done: List[bool], gamma: float = 0.99) -> List[float]:
+    """
+    Compute the returns (discounted sum of rewards) for each step in the trajectory.
+    """
     returns = []
     R = 0
     for r, d in zip(reward[::-1], done[::-1]):
@@ -42,7 +46,16 @@ class PGTrainer:
 
         self.envs = [Env() for _ in range(self.batch_size)]
     
-    def _rollout(self, num_traj=8):
+    def _rollout(self, num_traj: int = 8) -> List[Dict]:
+        """
+        Rollout the model for `num_traj` trajectories.
+
+        Args:
+            num_traj (int): The number of trajectories.
+
+        Returns:
+            List[Dict]: Each dict contains the observations, actions, rewards, dones, and returns.
+        """
         assert num_traj % self.batch_size == 0, "num_traj must be divisible by batch_size"
         num_episode = num_traj // self.batch_size
         trajectories = [[] for i in range(self.num_traj)]
@@ -88,7 +101,13 @@ class PGTrainer:
             trajectories[i]['return'] = compute_returns(trajectories[i]['reward'], trajectories[i]['done'])
         return default_decollate(trajectories)
 
-    def _update(self, trajectories):
+    def _update(self, trajectories: List[Dict]) -> None:
+        """
+        Update the model using the trajectories.
+
+        Args:
+            trajectories (List[Dict]): The trajectories.
+        """
         random.shuffle(trajectories)
         for start_idx in range(0, len(trajectories), self.batch_size):
             end_idx = start_idx + self.batch_size
@@ -108,11 +127,14 @@ class PGTrainer:
             self.optimizer.step()
             self._iter_num += 1
     
-    def train(self, num_iters):
+    def train(self, num_iters: int) -> None:
+        """
+        Train the model for `num_iters` iterations.
+        """
         self._iter_num = 0
         while True:
             with torch.no_grad():
-                trajectories = self._rollout()
+                trajectories = self._rollout(num_traj=self.batch_size)
             self._update(trajectories)
             if self._iter_num >= num_iters:
                 break

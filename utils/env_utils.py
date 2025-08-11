@@ -1,10 +1,14 @@
 class Env:
+    """
+    Fake environment class.
+    """
+
     def __init__(self):
         self.max_step = 10
         self.prompt = None
         self._cnt = 0
 
-    def reset(self, prompt):
+    def reset(self, prompt: str) -> Dict:
         self.prompt = prompt
         self._cnt = 0
         return {
@@ -14,7 +18,7 @@ class Env:
             'info': {}
         }
     
-    def step(self, action):
+    def step(self, action: int) -> Dict:
         self._cnt += 1
         ret = {
             'obs': self.prompt + str(self.action),
